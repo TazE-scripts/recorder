@@ -1,0 +1,33 @@
+const
+  VIDEO_NAME = 'recording_0';  // Easy to change target video
+
+  rootPath: String := ExtractFilePath(ScriptFile);
+  videoDir: String := rootPath + 'video' + DirectorySeparator;
+  framesDir: String := rootPath + 'frames' + DirectorySeparator;
+  ffmpegPath: String := rootPath + 'FFmpeg' + DirectorySeparator + 'bin' + DirectorySeparator + 'ffmpeg.exe';
+
+  inputVideo: String := videoDir + VIDEO_NAME + '.mp4';
+  outputPath: String := framesDir + VIDEO_NAME + DirectorySeparator;
+
+var
+  output: String;
+  exitCode: Int32;
+begin
+  WriteLn('Converting: ' + VIDEO_NAME + '.mp4 -> frames');
+
+  if not CreateDirectory(outputPath) then
+    RaiseException('Failed to create output directory: ' + outputPath);
+
+  if not FileExists(ffmpegPath) then
+    RaiseException('FFmpeg not found: ' + ffmpegPath);
+
+  if not FileExists(inputVideo) then
+    RaiseException('Video not found: ' + inputVideo);
+
+  exitCode := RunCommand(ffmpegPath, ['-i', inputVideo, '-y', outputPath + '%08d.bmp'], output);
+
+  if exitCode <> 0 then
+    RaiseException('FFmpeg failed with exit code: ' + ToString(exitCode));
+
+  WriteLn('Frames saved to: ' + outputPath);
+end.

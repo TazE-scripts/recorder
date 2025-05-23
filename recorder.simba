@@ -1,0 +1,217 @@
+(*
+# Continuous Recorder
+Records OSRS gameplay at specified FPS until script termination.
+Features frame filtering for username/XP hiding and automatic cleanup.
+
+Example:
+```pascal
+ContinuousRecorder.Setup('C:\recordings\'); // 10fps, hide chat & XP bar
+ContinuousRecorder.Start(); // Start recording
+// Your script logic...
+ContinuousRecorder.Stop(); // Optional manual stop
+```
+*)
+
+{$DEFINE WL_CONTINUOUS_RECORDER_INCLUDED}
+{$I WaspLib/osr.simba}
+
+type
+  TContinuousRecorder = record(TSRLBaseRecord)
+    PID: Integer;
+    IsRecording: Boolean;
+    IsSetup: Boolean;
+    Debugging: Boolean;
+    OutputDirectory: String;
+    TargetFPS: Integer;
+    HideChat, HideXPBar: Boolean;
+  end;
+
+var
+  ContinuousRecorder: TContinuousRecorder;
+
+// Auto-cleanup on script termination
+procedure _CleanupRecorder();
+begin
+  if ContinuousRecorder.IsRecording then
+    ContinuousRecorder.Stop();
+end;
+
+(*
+## ContinuousRecorder.Setup
+```pascal
+procedure ContinuousRecorder.Setup(directory: String; fps: Integer = 10; hideChat: Boolean = True; hideXPBar: Boolean = True);
+```
+Configures continuous recording with validation and common settings.
+
+Parameters:
+- **directory**: Output directory for video files
+- **fps**: Target frames per second (default: 10)
+- **hideChat**: Hide chat area (default: True)
+- **hideXPBar**: Hide XP bar area (default: True)
+*)
+procedure TContinuousRecorder.Setup(directory: String; fps: Integer = 10; hideChat: Boolean = True; hideXPBar: Boolean = True);
+var
+  subprocessPath: String;
+begin
+  if Self.IsRecording then
+    Self.Fatal('Cannot setup while recording. Call Stop() first.');
+  Self.Name := 'ContinuousRecorder';
+  // Validate and create directory
+  Self.OutputDirectory := IncludeTrailingPathDelimiter(directory);
+  if not DirectoryExists(Self.OutputDirectory) then
+    if not CreateDirectory(Self.OutputDirectory) then
+      Self.Fatal('Failed to create recording directory: ' + Self.OutputDirectory);
+
+  // Validate FPS
+  if (fps < 1) or (fps > 60) then
+  begin
+    Self.DebugLn('Invalid FPS (' + ToString(fps) + '). Using 10 FPS.');
+    Self.TargetFPS := 10;
+  end else
+    Self.TargetFPS := fps;
+
+  // Validate subprocess exists
+  subprocessPath := ExtractFilePath(ScriptFile) + 'subprocess.simba';
+  if not FileExists(subprocessPath) then
+    Self.Fatal('Recorder subprocess not found: ' + subprocessPath);
+
+  // Store filter preferences
+  Self.HideChat := hideChat;
+  Self.HideXPBar := hideXPBar;
+
+  Self.IsSetup := True;
+  Self.DebugLn('Recorder configured: ' + ToString(Self.TargetFPS) + ' FPS, Directory: ' + Self.OutputDirectory);
+  AddOnTerminate(@_CleanupRecorder);
+end;
+
+(*
+## ContinuousRecorder.Start
+```pascal
+procedure ContinuousRecorder.Start();
+```
+Starts continuous recording using settings from Setup().
+Must call Setup() first.
+*)
+procedure TContinuousRecorder.Start();
+var
+  params: TStringArray;
+  subprocessPath: String;
+  chatBox, xpBox: TBox;
+begin
+  if not Self.IsSetup then
+    Self.Fatal('Must call Setup() before Start()');
+
+  if Self.IsRecording then
+    Self.Fatal('Already recording. Call Stop() first.');
+
+  subprocessPath := ExtractFilePath(ScriptFile) + 'subprocess.simba';
+
+  params := [
+    'ScriptPID=' + ToString(GetProcessID()),
+    'Window=' + ToString(GetSimbaTargetWindow()),
+    'Seconds=' + ToString(86400), // 24 hours max
+    'Directory=' + Self.OutputDirectory,
+    'Debugging=' + ToString(Self.Debugging),
+    'FPS=' + ToString(Self.TargetFPS)
+  ];
+
+  if Self.HideChat then
+  begin
+    chatBox := Chat.LineBoxes.Merge;
+    params += 'UsernameBox=' + ToString(chatBox.X1) + '-' + ToString(chatBox.Y1) + '-' + ToString(chatBox.X2) + '-' + ToString(chatBox.Y2);
+  end;
+
+  if Self.HideXPBar then
+  begin
+    XPBar._Setup;
+    xpBox := XPBar.Bounds;
+    params += 'ExperienceBox=' + ToString(xpBox.X1) + '-' + ToString(xpBox.Y1) + '-' + ToString(xpBox.X2) + '-' + ToString(xpBox.Y2);
+  end;
+
+  try
+    RunScript(subprocessPath, params);
+    Self.PID := GetProcessID();
+    Self.IsRecording := True;
+    Self.DebugLn('Started recording at ' + ToString(Self.TargetFPS) + ' FPS to: ' + Self.OutputDirectory);
+  except
+    Self.Fatal('Failed to start recording subprocess: ' + GetExceptionMessage());
+  end;
+end;
+
+(*
+## ContinuousRecorder.Stop
+```pascal
+procedure ContinuousRecorder.Stop();
+```
+Manually stops the continuous recording.
+Note: Recording automatically stops when main script terminates.
+*)
+procedure TContinuousRecorder.Stop();
+begin
+  if not Self.IsRecording then
+  begin
+    Self.DebugLn('No active recording to stop.');
+    Exit;
+  end;
+
+  Self.IsRecording := False;
+  Self.DebugLn('Recording stopped. Video saved to: ' + Self.OutputDirectory);
+end;
+
+(*
+## ContinuousRecorder.IsActive
+```pascal
+function ContinuousRecorder.IsActive(): Boolean;
+```
+Returns true if recording is currently active.
+*)
+function TContinuousRecorder.IsActive(): Boolean;
+begin
+  Result := Self.IsRecording;
+end;
+
+(*
+## ContinuousRecorder.GetStatus
+```pascal
+function ContinuousRecorder.GetStatus(): String;
+```
+Returns current recording status information.
+*)
+function TContinuousRecorder.GetStatus(): String;
+begin
+  if not Self.IsSetup then
+    Result := 'Not configured'
+  else if Self.IsRecording then
+    Result := 'Recording at ' + ToString(Self.TargetFPS) + ' FPS to: ' + Self.OutputDirectory
+  else
+    Result := 'Configured but not recording';
+end;
+
+(*
+## ContinuousRecorder.SetDebug
+```pascal
+procedure ContinuousRecorder.SetDebug(enabled: Boolean);
+```
+Enables/disables debug output for troubleshooting.
+*)
+procedure TContinuousRecorder.SetDebug(enabled: Boolean);
+begin
+  Self.Debugging := enabled;
+  if enabled then
+    Self.DebugLn('Debug mode enabled');
+end;
+
+const
+  videoPath: String := ExtractFilePath(ScriptFile) + 'video' + DirectorySeparator;
+
+begin
+  Options.SetZoomLevel(5); // useful for MS normalization
+  ContinuousRecorder.Setup(videoPath);
+
+  // Start recording
+  ContinuousRecorder.Start();
+  repeat
+    ContinuousRecorder.DebugLn('Recording...');
+    Sleep(1000);
+  until false;
+end;

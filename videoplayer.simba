@@ -1,0 +1,148 @@
+program SlackyVideoPlayer;
+{$I SRL-T/osr.simba}
+type
+  TVideoPlayer = record
+    Frames: TStringArray;
+    FrameIndex: Int32;
+    Directory: String;
+    FPS: Int32;
+  end;
+
+const
+  PAUSE_BUTTON = VK_SPACE;
+  REWIND_FRAME = VK_LEFT;
+  FORWARD_FRAME = VK_RIGHT;
+  SHIFT_KEY = VK_SHIFT;
+
+var
+  Player: TVideoPlayer;
+
+function GetFrameNumber(filename: String): Int32;
+begin
+  Result := StrToIntDef(ExtractFromStr(filename, Numbers), 0);
+end;
+
+procedure TVideoPlayer.Init(dir: String; fps: Int32 = 25; pattern: String = '*.*');
+var
+  i, j: Int32;
+  temp: String;
+begin
+  Self.Directory := dir;
+  Self.FPS := fps;
+  Self.FrameIndex := 0;
+  Self.Frames := GetFiles(dir, pattern);
+
+  if Length(Self.Frames) = 0 then
+    raise 'No frames found in ' + dir;
+
+  // Sort frames by number
+  for i := 0 to High(Self.Frames)-1 do
+    for j := 0 to High(Self.Frames)-i-1 do
+      if GetFrameNumber(Self.Frames[j]) > GetFrameNumber(Self.Frames[j+1]) then
+      begin
+        temp := Self.Frames[j];
+        Self.Frames[j] := Self.Frames[j+1];
+        Self.Frames[j+1] := temp;
+      end;
+end;
+
+procedure TVideoPlayer.ShowCurrentFrame();
+var
+  bmp: TMufasaBitmap;
+begin
+  bmp.Init();
+  try
+    bmp.LoadFromFile(Self.Directory + Self.Frames[Self.FrameIndex]);
+    ShowBitmap(bmp);
+  finally
+    bmp.Free();
+  end;
+end;
+
+function TVideoPlayer.IsKeyPressed(key: Int32): Boolean;
+begin
+  if not IsKeyDown(key) then
+    Exit(False);
+
+  while IsKeyDown(key) do
+    Sleep(1);
+
+  Result := True;
+end;
+
+procedure TVideoPlayer.AdvanceFrames(count: Int32);
+begin
+  if count < 0 then
+    Self.FrameIndex := Max(0, Self.FrameIndex + count)
+  else
+    Self.FrameIndex := Min(High(Self.Frames), Self.FrameIndex + count);
+end;
+
+function TVideoPlayer.HandleControls(): Boolean;
+var
+  isPaused: Boolean;
+  frameStep: Int32;
+begin
+  if Self.IsKeyPressed(PAUSE_BUTTON) then
+  begin
+    isPaused := True;
+    WriteLn('Paused at frame: ', GetFrameNumber(Self.Frames[Self.FrameIndex]));
+  end else
+    Exit(False);
+
+  while isPaused do
+  begin
+    if IsKeyDown(SHIFT_KEY) then
+      frameStep := Self.FPS
+    else
+      frameStep := 1;
+
+    if Self.IsKeyPressed(REWIND_FRAME) then
+    begin
+      Self.AdvanceFrames(-frameStep);
+      WriteLn('Frame: ', GetFrameNumber(Self.Frames[Self.FrameIndex]));
+      Self.ShowCurrentFrame();
+    end
+    else if Self.IsKeyPressed(FORWARD_FRAME) then
+    begin
+      Self.AdvanceFrames(frameStep);
+      WriteLn('Frame: ', GetFrameNumber(Self.Frames[Self.FrameIndex]));
+      Self.ShowCurrentFrame();
+    end
+    else if Self.IsKeyPressed(PAUSE_BUTTON) then
+      isPaused := False;
+
+    Sleep(1);
+  end;
+
+  Result := True;
+end;
+
+procedure TVideoPlayer.Play();
+begin
+  WriteLn('Playing ', Length(Self.Frames), ' frames at ', Self.FPS, ' FPS');
+  WriteLn('Controls:');
+  WriteLn('- Space to pause/play');
+  WriteLn('- Left/Right arrows for single frame');
+  WriteLn('- Shift + Left/Right to jump ', FPS, ' frames');
+
+  while True do
+  begin
+    Self.ShowCurrentFrame();
+
+    if Self.HandleControls() then
+      Continue;
+
+    Wait(1000 div Self.FPS);
+    Self.AdvanceFrames(1);
+  end;
+end;
+
+begin
+  try
+    Player.Init(ExtractFilePath(ScriptFile) + 'frames\recording_0\', 20, '*.*');
+    Player.Play();
+  except
+    WriteLn('Error: ', GetExceptionMessage());
+  end;
+end.
